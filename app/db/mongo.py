@@ -1,0 +1,41 @@
+from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.config import settings
+
+# MongoDB client
+client: AsyncIOMotorClient = None
+db = None
+
+
+async def connect_mongo():
+    """Create MongoDB connection"""
+    global client, db
+    try:
+        client = AsyncIOMotorClient(settings.mongodb_connection_string)
+        db = client[settings.MONGODB_DB_NAME]
+        # Test connection immediately
+        await client.admin.command("ping")
+        print("MongoDB connection established successfully")
+    except Exception as e:
+        # Connection failed, but don't raise - let health checks handle it
+        print(f"Warning: MongoDB connection failed: {e}")
+        client = None
+        db = None
+
+
+async def close_mongo():
+    """Close MongoDB connection"""
+    global client
+    if client:
+        client.close()
+
+
+async def ping_mongo() -> bool:
+    """Ping MongoDB to check connection"""
+    try:
+        if client is None:
+            return False
+        await client.admin.command("ping")
+        return True
+    except Exception:
+        return False
+
