@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     
     # JWT
     JWT_SECRET: str = "change_me_to_long_random"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    
+    # Admin Seed
+    SEED_ADMIN_KEY: str | None = None
     
     # CORS
     CORS_ORIGINS: Union[str, List[str]] = "http://localhost:3000"

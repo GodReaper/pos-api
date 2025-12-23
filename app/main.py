@@ -3,8 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.mongo import connect_mongo, close_mongo, ping_mongo
 from app.db.redis import connect_redis, close_redis, ping_redis
+from app.routes.auth import router as auth_router
 
 app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG)
+
+# Include routers
+app.include_router(auth_router)
 
 # CORS middleware
 app.add_middleware(
