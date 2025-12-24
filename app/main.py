@@ -1,14 +1,16 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.db.mongo import connect_mongo, close_mongo, ping_mongo
+from app.db.mongo import connect_mongo, close_mongo, ping_mongo, create_indexes
 from app.db.redis import connect_redis, close_redis, ping_redis
 from app.routes.auth import router as auth_router
+from app.routes.menu import router as menu_router
 
 app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG)
 
 # Include routers
 app.include_router(auth_router)
+app.include_router(menu_router)
 
 # CORS middleware
 app.add_middleware(
@@ -25,6 +27,7 @@ async def startup_event():
     """Initialize database connections on startup"""
     await connect_mongo()
     await connect_redis()
+    await create_indexes()
 
 
 @app.on_event("shutdown")

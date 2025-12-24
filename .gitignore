@@ -12,3 +12,5 @@
 .env.test.local
 .env.production.local
 __pycache__/
+
+MENU_TESTING_GUIDE.md
