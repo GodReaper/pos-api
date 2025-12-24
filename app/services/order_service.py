@@ -1,20 +1,32 @@
-from typing import Optional
+from typing import Optional, List, Tuple
+from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from app.models.order import (
-    Order, OrderCreate, OrderItemUpdate, OrderItem, OrderTotals,
-    KOTPrint, BillPrint, Payment
+    Order,
+    OrderCreate,
+    OrderItemUpdate,
+    OrderItem,
+    OrderTotals,
+    KOTPrint,
+    BillPrint,
+    Payment,
+    OrderListItem,
+    OrderItemPreview,
 )
+from app.models.user import User
 from app.repositories.order_repo import (
     get_order_by_id,
     get_order_by_table_id,
     create_order,
     update_order,
-    order_exists
+    order_exists,
+    list_orders_raw,
 )
 from app.repositories.table_repo import get_table_by_id, update_table
 from app.repositories.menu_item_repo import get_item_by_id
-from app.db.redis import acquire_lock, release_lock
-from datetime import datetime
+from app.repositories.area_repo import get_area_by_id
+from app.repositories.user_repo import get_user_by_id
+from app.db.redis import acquire_lock, release_lock, publish_event
 
 
 # Tax rate (can be made configurable later)
@@ -89,10 +101,10 @@ async def add_order_item(order_id: str, item_update: OrderItemUpdate, user_id: s
         )
     
     # Check if order can be modified
-    if order.status in ["paid", "closed"]:
+    if order.status in ["paid", "closed", "cancelled"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot modify a paid or closed order"
+            detail="Cannot modify a paid, closed, or cancelled order"
         )
     
     # Get menu item to get current name and price
@@ -213,7 +225,7 @@ async def print_kot(order_id: str) -> Order:
         return updated_order
     finally:
         await release_lock(lock_key)
-
+    
 
 async def print_bill(order_id: str) -> Order:
     """Print bill for an order"""
@@ -263,7 +275,7 @@ async def print_bill(order_id: str) -> Order:
         return updated_order
     finally:
         await release_lock(lock_key)
-
+    
 
 async def process_payment(order_id: str, payments: list[Payment]) -> Order:
     """Process payment for an order and close it"""
@@ -317,7 +329,7 @@ async def process_payment(order_id: str, payments: list[Payment]) -> Order:
         })
     
     return updated_order
-
+    
 
 async def get_current_order(table_id: str) -> Optional[Order]:
     """Get current order for a table"""
@@ -334,3 +346,259 @@ async def get_current_order(table_id: str) -> Optional[Order]:
     order = await get_order_by_id(table.current_order_id)
     return order
 
+
+def _build_status_filter(scope: str) -> List[str] | str | None:
+    """Map logical scope to underlying status filter."""
+    if scope == "running":
+        return ["open", "kot_printed", "billed"]
+    if scope == "closed":
+        return ["paid", "closed"]
+    if scope == "cancelled":
+        return "cancelled"
+    # "all" or anything else -> no explicit filter
+    return None
+
+
+async def list_orders_service(
+    scope: str,
+    page: int,
+    page_size: int,
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
+    biller_id: Optional[str] = None,
+    text: Optional[str] = None,
+) -> Tuple[List[OrderListItem], int]:
+    """
+    High-level listing with filters, enrichment (table/area names, biller username),
+    pagination and lightweight items preview.
+    """
+    # Base query
+    query: dict = {}
+
+    status_filter = _build_status_filter(scope)
+    if isinstance(status_filter, list):
+        query["status"] = {"$in": status_filter}
+    elif isinstance(status_filter, str):
+        query["status"] = status_filter
+
+    # Date range
+    if from_date or to_date:
+        created_at_filter: dict = {}
+        if from_date:
+            created_at_filter["$gte"] = from_date
+        if to_date:
+            created_at_filter["$lte"] = to_date
+        query["created_at"] = created_at_filter
+
+    # Biller filter
+    if biller_id:
+        from bson import ObjectId  # local import to avoid top-level dependency here
+        try:
+            query["created_by"] = ObjectId(biller_id)
+        except Exception:
+            # Invalid ObjectId -> no results
+            return [], 0
+
+    # Text search: table name or exact order id match
+    from app.db import mongo as _mongo_mod  # lazy import
+    table_ids_for_text: Optional[List[ObjectId]] = None
+    order_id_filter_oid = None
+    if text and _mongo_mod.db is not None:
+        from bson import ObjectId as _OID
+
+        # Attempt exact order id match
+        if _OID.is_valid(text):
+            order_id_filter_oid = _OID(text)
+
+        # Collect table ids with matching name
+        try:
+            cursor = _mongo_mod.db.tables.find(
+                {"name": {"$regex": text, "$options": "i"}},
+                projection={"_id": 1},
+            )
+            table_ids_for_text = []
+            async for t in cursor:
+                table_ids_for_text.append(t["_id"])
+        except Exception:
+            table_ids_for_text = None
+
+        or_clauses: List[dict] = []
+        if order_id_filter_oid is not None:
+            or_clauses.append({"_id": order_id_filter_oid})
+        if table_ids_for_text:
+            or_clauses.append({"table_id": {"$in": table_ids_for_text}})
+
+        if or_clauses:
+            query["$or"] = or_clauses
+
+    # Sort: newest first
+    sort = [("created_at", -1)]
+
+    raw_docs, total = await list_orders_raw(query, page=page, page_size=page_size, sort=sort)
+
+    if not raw_docs:
+        return [], total
+
+    # Collect related ids for enrichment
+    table_ids: List[str] = []
+    area_ids: List[str] = []
+    biller_ids: List[str] = []
+    for doc in raw_docs:
+        if doc.get("table_id"):
+            table_ids.append(str(doc["table_id"]))
+        if doc.get("area_id"):
+            area_ids.append(str(doc["area_id"]))
+        if doc.get("created_by"):
+            biller_ids.append(str(doc["created_by"]))
+
+    # Simple per-doc lookups via existing repositories (keeps logic centralized)
+    # For typical POS volumes this is acceptable; can be optimized to batch later.
+    tables_cache: dict[str, str] = {}
+    areas_cache: dict[str, str] = {}
+    users_cache: dict[str, str] = {}
+
+    async def _get_table_name(table_id: str) -> Optional[str]:
+        if table_id in tables_cache:
+            return tables_cache[table_id]
+        table = await get_table_by_id(table_id)
+        name = table.name if table else None
+        tables_cache[table_id] = name
+        return name
+
+    async def _get_area_name(area_id: str) -> Optional[str]:
+        if area_id in areas_cache:
+            return areas_cache[area_id]
+        area = await get_area_by_id(area_id)
+        name = area.name if area else None
+        areas_cache[area_id] = name
+        return name
+
+    async def _get_username(user_id: str) -> Optional[str]:
+        if user_id in users_cache:
+            return users_cache[user_id]
+        user = await get_user_by_id(user_id)
+        username = user.username if user else None
+        users_cache[user_id] = username
+        return username
+
+    items: List[OrderListItem] = []
+    for doc in raw_docs:
+        order = Order.from_db(doc)
+
+        # Items count and preview
+        items_count = sum(i.qty for i in order.items)
+        previews: List[OrderItemPreview] = []
+        for item in order.items[:3]:
+            previews.append(OrderItemPreview(name=item.name_snapshot, qty=item.qty))
+
+        table_name = await _get_table_name(order.table_id)
+        area_name = await _get_area_name(order.area_id)
+        created_by_username = await _get_username(order.created_by)
+
+        items.append(
+            OrderListItem(
+                id=order.id,
+                status=order.status,
+                area_id=order.area_id,
+                table_id=order.table_id,
+                table_name=table_name,
+                area_name=area_name,
+                created_by=order.created_by,
+                created_by_username=created_by_username,
+                created_at=order.created_at,
+                updated_at=order.updated_at,
+                grand_total=order.totals.grand_total,
+                items_count=items_count,
+                items_preview=previews,
+            )
+        )
+
+    return items, total
+
+
+async def cancel_order_service(order_id: str, user: User, reason: str) -> Order:
+    """
+    Cancel an order with permission checks and side effects.
+    - Does not delete payments or audit trail.
+    - Clears table.current_order_id + sets table.status='available' if currently open.
+    - Publishes Redis pub/sub events on pos:admin and pos:area:{area_id}.
+    """
+    reason = (reason or "").strip()
+    if not reason:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cancellation reason is required",
+        )
+
+    order = await get_order_by_id(order_id)
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Order not found",
+        )
+
+    if order.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Order is already cancelled",
+        )
+
+    # Permissions
+    if user.role == "admin":
+        allowed = True
+    elif user.role == "biller":
+        allowed = order.created_by == user.id
+    else:
+        allowed = False
+
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to cancel this order",
+        )
+
+    now_utc = datetime.now(timezone.utc)
+
+    update_data = {
+        "status": "cancelled",
+        "cancelled_at": now_utc,
+        "cancelled_by_user_id": user.id,
+        "cancelled_by_role": user.role,
+        "cancel_reason": reason,
+    }
+
+    updated_order = await update_order(order_id, update_data)
+    if not updated_order:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update order",
+        )
+
+    # If table currently points to this order, clear it and mark available
+    table = await get_table_by_id(updated_order.table_id)
+    if table and table.current_order_id == updated_order.id:
+        await update_table(
+            updated_order.table_id,
+            {
+                "status": "available",
+                "current_order_id": None,
+            },
+        )
+
+    # Publish Redis events (best-effort)
+    payload = {
+        "type": "order_cancelled",
+        "order_id": updated_order.id,
+        "area_id": updated_order.area_id,
+        "table_id": updated_order.table_id,
+        "status": updated_order.status,
+        "cancelled_at": updated_order.cancelled_at.isoformat()
+        if updated_order.cancelled_at
+        else None,
+        "cancelled_by_role": updated_order.cancelled_by_role,
+    }
+
+    await publish_event("pos:admin", payload)
+    await publish_event(f"pos:area:{updated_order.area_id}", payload)
+
+    return updated_order

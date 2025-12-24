@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Tuple, Dict, Any
 from datetime import datetime
 from app.db import mongo
 from app.models.order import OrderInDB, Order
@@ -47,13 +47,13 @@ async def get_orders_by_table(table_id: str) -> List[Order]:
     
     try:
         cursor = mongo.db.orders.find({"table_id": ObjectId(table_id)}).sort("created_at", -1)
-        orders = []
+        orders: List[Order] = []
         async for order_doc in cursor:
             orders.append(Order.from_db(order_doc))
         return orders
     except Exception:
         return []
-
+    
 
 async def get_orders_by_area(area_id: str) -> List[Order]:
     """Get all orders for an area"""
@@ -62,13 +62,13 @@ async def get_orders_by_area(area_id: str) -> List[Order]:
     
     try:
         cursor = mongo.db.orders.find({"area_id": ObjectId(area_id)}).sort("created_at", -1)
-        orders = []
+        orders: List[Order] = []
         async for order_doc in cursor:
             orders.append(Order.from_db(order_doc))
         return orders
     except Exception:
         return []
-
+    
 
 async def create_order(order_data: OrderInDB) -> Order:
     """Create a new order"""
@@ -80,18 +80,36 @@ async def create_order(order_data: OrderInDB) -> Order:
     order_dict["table_id"] = ObjectId(order_dict["table_id"])
     order_dict["area_id"] = ObjectId(order_dict["area_id"])
     order_dict["created_by"] = ObjectId(order_dict["created_by"])
+    if order_dict.get("cancelled_by_user_id"):
+        order_dict["cancelled_by_user_id"] = ObjectId(order_dict["cancelled_by_user_id"])
     
     # Convert nested models to dicts
     if order_dict.get("items"):
-        order_dict["items"] = [item.model_dump() if hasattr(item, "model_dump") else item for item in order_dict["items"]]
+        order_dict["items"] = [
+            item.model_dump() if hasattr(item, "model_dump") else item
+            for item in order_dict["items"]
+        ]
     if order_dict.get("totals"):
-        order_dict["totals"] = order_dict["totals"].model_dump() if hasattr(order_dict["totals"], "model_dump") else order_dict["totals"]
+        order_dict["totals"] = (
+            order_dict["totals"].model_dump()
+            if hasattr(order_dict["totals"], "model_dump")
+            else order_dict["totals"]
+        )
     if order_dict.get("kot_prints"):
-        order_dict["kot_prints"] = [kot.model_dump() if hasattr(kot, "model_dump") else kot for kot in order_dict["kot_prints"]]
+        order_dict["kot_prints"] = [
+            kot.model_dump() if hasattr(kot, "model_dump") else kot
+            for kot in order_dict["kot_prints"]
+        ]
     if order_dict.get("bill_prints"):
-        order_dict["bill_prints"] = [bill.model_dump() if hasattr(bill, "model_dump") else bill for bill in order_dict["bill_prints"]]
+        order_dict["bill_prints"] = [
+            bill.model_dump() if hasattr(bill, "model_dump") else bill
+            for bill in order_dict["bill_prints"]
+        ]
     if order_dict.get("payments"):
-        order_dict["payments"] = [payment.model_dump() if hasattr(payment, "model_dump") else payment for payment in order_dict["payments"]]
+        order_dict["payments"] = [
+            payment.model_dump() if hasattr(payment, "model_dump") else payment
+            for payment in order_dict["payments"]
+        ]
     
     result = await mongo.db.orders.insert_one(order_dict)
     
@@ -115,18 +133,36 @@ async def update_order(order_id: str, update_data: dict) -> Optional[Order]:
             update_dict["area_id"] = ObjectId(update_dict["area_id"])
         if "created_by" in update_dict:
             update_dict["created_by"] = ObjectId(update_dict["created_by"])
+        if "cancelled_by_user_id" in update_dict and update_dict["cancelled_by_user_id"]:
+            update_dict["cancelled_by_user_id"] = ObjectId(update_dict["cancelled_by_user_id"])
         
         # Convert nested models to dicts
         if "items" in update_dict:
-            update_dict["items"] = [item.model_dump() if hasattr(item, "model_dump") else item for item in update_dict["items"]]
+            update_dict["items"] = [
+                item.model_dump() if hasattr(item, "model_dump") else item
+                for item in update_dict["items"]
+            ]
         if "totals" in update_dict:
-            update_dict["totals"] = update_dict["totals"].model_dump() if hasattr(update_dict["totals"], "model_dump") else update_dict["totals"]
+            update_dict["totals"] = (
+                update_dict["totals"].model_dump()
+                if hasattr(update_dict["totals"], "model_dump")
+                else update_dict["totals"]
+            )
         if "kot_prints" in update_dict:
-            update_dict["kot_prints"] = [kot.model_dump() if hasattr(kot, "model_dump") else kot for kot in update_dict["kot_prints"]]
+            update_dict["kot_prints"] = [
+                kot.model_dump() if hasattr(kot, "model_dump") else kot
+                for kot in update_dict["kot_prints"]
+            ]
         if "bill_prints" in update_dict:
-            update_dict["bill_prints"] = [bill.model_dump() if hasattr(bill, "model_dump") else bill for bill in update_dict["bill_prints"]]
+            update_dict["bill_prints"] = [
+                bill.model_dump() if hasattr(bill, "model_dump") else bill
+                for bill in update_dict["bill_prints"]
+            ]
         if "payments" in update_dict:
-            update_dict["payments"] = [payment.model_dump() if hasattr(payment, "model_dump") else payment for payment in update_dict["payments"]]
+            update_dict["payments"] = [
+                payment.model_dump() if hasattr(payment, "model_dump") else payment
+                for payment in update_dict["payments"]
+            ]
         
         # Always update updated_at
         update_dict["updated_at"] = datetime.utcnow()
@@ -145,7 +181,7 @@ async def update_order(order_id: str, update_data: dict) -> Optional[Order]:
         return await get_order_by_id(order_id)
     except Exception:
         return None
-
+    
 
 async def order_exists(order_id: str) -> bool:
     """Check if an order exists"""
@@ -158,3 +194,34 @@ async def order_exists(order_id: str) -> bool:
     except Exception:
         return False
 
+
+async def list_orders_raw(
+    query: Dict[str, Any],
+    page: int,
+    page_size: int,
+    sort: Optional[List[Tuple[str, int]]] = None,
+) -> Tuple[List[Dict[str, Any]], int]:
+    """
+    Low-level list helper returning raw Mongo documents and total count.
+    No caching; caller is responsible for projections/enrichment.
+    """
+    if mongo.db is None:
+        return [], 0
+
+    try:
+        collection = mongo.db.orders
+        total = await collection.count_documents(query)
+
+        cursor = collection.find(query)
+        if sort:
+            cursor = cursor.sort(sort)
+
+        cursor = cursor.skip((page - 1) * page_size).limit(page_size)
+
+        items: List[Dict[str, Any]] = []
+        async for doc in cursor:
+            items.append(doc)
+
+        return items, total
+    except Exception:
+        return [], 0

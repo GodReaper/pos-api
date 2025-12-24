@@ -48,7 +48,7 @@ class OrderBase(BaseModel):
     area_id: str = Field(..., description="Area ID")
     status: str = Field(
         default="open",
-        pattern="^(open|kot_printed|billed|paid|closed)$",
+        pattern="^(open|kot_printed|billed|paid|closed|cancelled)$",
         description="Order status"
     )
     items: List[OrderItem] = Field(default_factory=list, description="Order items")
@@ -78,6 +78,14 @@ class OrderInDB(OrderBase):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    cancelled_at: Optional[datetime] = Field(None, description="When the order was cancelled")
+    cancelled_by_user_id: Optional[PyObjectId] = Field(
+        None, description="User ID who cancelled the order"
+    )
+    cancelled_by_role: Optional[str] = Field(
+        None, pattern="^(admin|biller)$", description="Role of user who cancelled the order"
+    )
+    cancel_reason: Optional[str] = Field(None, description="Reason for cancellation")
 
     model_config = {
         "populate_by_name": True,
@@ -91,6 +99,10 @@ class Order(OrderBase):
     id: str
     created_at: datetime
     updated_at: datetime
+    cancelled_at: Optional[datetime] = None
+    cancelled_by_user_id: Optional[str] = None
+    cancelled_by_role: Optional[str] = None
+    cancel_reason: Optional[str] = None
 
     @classmethod
     def from_db(cls, db_order: dict) -> "Order":
@@ -107,7 +119,15 @@ class Order(OrderBase):
             payments=[Payment(**payment) for payment in db_order.get("payments", [])],
             created_by=str(db_order["created_by"]),
             created_at=db_order.get("created_at", datetime.utcnow()),
-            updated_at=db_order.get("updated_at", datetime.utcnow())
+            updated_at=db_order.get("updated_at", datetime.utcnow()),
+            cancelled_at=db_order.get("cancelled_at"),
+            cancelled_by_user_id=(
+                str(db_order["cancelled_by_user_id"])
+                if db_order.get("cancelled_by_user_id")
+                else None
+            ),
+            cancelled_by_role=db_order.get("cancelled_by_role"),
+            cancel_reason=db_order.get("cancel_reason"),
         )
 
 
@@ -116,3 +136,28 @@ class OrderWithTable(Order):
     table_name: Optional[str] = Field(None, description="Table name")
     area_name: Optional[str] = Field(None, description="Area name")
 
+
+class OrderItemPreview(BaseModel):
+    """Lightweight item preview for order listings"""
+    name: str
+    qty: int
+
+
+class OrderListItem(BaseModel):
+    """Order list item projection for listings"""
+    id: str = Field(..., description="Order ID")
+    status: str = Field(..., description="Order status")
+    area_id: str = Field(..., description="Area ID")
+    table_id: str = Field(..., description="Table ID")
+    table_name: Optional[str] = Field(None, description="Table name")
+    area_name: Optional[str] = Field(None, description="Area name")
+    created_by: str = Field(..., description="User ID who created the order")
+    created_by_username: Optional[str] = Field(None, description="Username of creator")
+    created_at: datetime
+    updated_at: datetime
+    grand_total: float = Field(..., description="Grand total from totals")
+    items_count: int = Field(..., description="Total number of items (sum of qty)")
+    items_preview: List[OrderItemPreview] = Field(
+        default_factory=list,
+        description="First 3 item previews (name + qty)"
+    )

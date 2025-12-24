@@ -1,4 +1,5 @@
-from typing import Optional
+from typing import Optional, Dict, Any
+import json
 import redis.asyncio as redis
 from app.core.config import settings
 
@@ -63,7 +64,7 @@ async def acquire_lock(key: str, ttl: int = 2) -> bool:
     except Exception:
         # On error, allow operation (graceful degradation)
         return True
-
+    
 
 async def release_lock(key: str):
     """Release a distributed lock"""
@@ -74,7 +75,7 @@ async def release_lock(key: str):
         await redis_client.delete(f"lock:{key}")
     except Exception:
         pass
-
+    
 
 async def get_cache(key: str) -> Optional[str]:
     """Get a value from cache"""
@@ -85,7 +86,7 @@ async def get_cache(key: str) -> Optional[str]:
         return await redis_client.get(f"cache:{key}")
     except Exception:
         return None
-
+    
 
 async def set_cache(key: str, value: str, ttl: int = 2):
     """Set a value in cache with TTL in seconds"""
@@ -96,7 +97,7 @@ async def set_cache(key: str, value: str, ttl: int = 2):
         await redis_client.set(f"cache:{key}", value, ex=ttl)
     except Exception:
         pass
-
+    
 
 async def delete_cache(key: str):
     """Delete a value from cache"""
@@ -106,4 +107,17 @@ async def delete_cache(key: str):
     try:
         await redis_client.delete(f"cache:{key}")
     except Exception:
+        pass
+
+
+async def publish_event(channel: str, payload: Dict[str, Any]) -> None:
+    """Publish a small JSON event to a Redis pub/sub channel."""
+    if redis_client is None:
+        return
+
+    try:
+        message = json.dumps(payload)
+        await redis_client.publish(channel, message)
+    except Exception:
+        # Best-effort: failures should not break business flow
         pass

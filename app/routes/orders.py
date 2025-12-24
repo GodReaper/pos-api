@@ -1,6 +1,8 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from app.models.order import Order, OrderItemUpdate, Payment
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from pydantic import BaseModel
+from app.models.order import Order, OrderItemUpdate, Payment, OrderListItem
 from app.models.user import User
 from app.services.order_service import (
     open_order,
@@ -8,13 +10,74 @@ from app.services.order_service import (
     print_kot,
     print_bill,
     process_payment,
-    get_current_order
+    get_current_order,
+    list_orders_service,
+    cancel_order_service,
 )
-from app.core.rbac import require_biller
+from app.core.rbac import require_biller, require_admin_or_biller
 from app.services.assignment_service import is_biller_assigned_to_area
 from app.repositories.order_repo import get_order_by_id
 
 router = APIRouter(prefix="/orders", tags=["orders"])
+
+
+class PaginatedOrdersResponse(BaseModel):
+    items: List[OrderListItem]
+    page: int
+    page_size: int
+    total: int
+
+
+@router.get("", response_model=PaginatedOrdersResponse)
+async def list_orders(
+    scope: str = Query("running", regex="^(running|closed|cancelled|all)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    from_date: Optional[str] = Query(None, alias="from"),
+    to_date: Optional[str] = Query(None, alias="to"),
+    biller_id: Optional[str] = Query(None),
+    current_user: User = Depends(require_admin_or_biller),
+):
+    """
+    List orders with filters and pagination.
+    - scope: running|closed|cancelled|all (default running)
+    - from/to: YYYY-MM-DD (optional)
+    - biller_id: filter by creator (admin only)
+    """
+    # Enforce biller_id filter only for admin
+    effective_biller_id = biller_id
+    if current_user.role != "admin":
+        effective_biller_id = None
+
+    # Parse dates as UTC day bounds
+    def _parse_date(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            # Interpret as naive date and assume UTC
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
+    from_dt = _parse_date(from_date)
+    to_dt = _parse_date(to_date)
+
+    items, total = await list_orders_service(
+        scope=scope,
+        page=page,
+        page_size=page_size,
+        from_date=from_dt,
+        to_date=to_dt,
+        biller_id=effective_biller_id,
+        text=None,
+    )
+
+    return PaginatedOrdersResponse(
+        items=items,
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
 
 
 @router.get("/{order_id}", response_model=Order)
@@ -137,3 +200,20 @@ async def process_order_payment(
     
     return await process_payment(order_id, payments)
 
+
+class CancelOrderRequest(BaseModel):
+    reason: str
+
+
+@router.post("/{order_id}/cancel", response_model=Order)
+async def cancel_order(
+    order_id: str,
+    body: CancelOrderRequest,
+    current_user: User = Depends(require_admin_or_biller),
+):
+    """
+    Cancel an order.
+    - Admin can cancel any order.
+    - Biller can cancel only their own orders.
+    """
+    return await cancel_order_service(order_id, current_user, body.reason)
