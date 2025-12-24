@@ -7,6 +7,8 @@ from app.routes.auth import router as auth_router
 from app.routes.menu import router as menu_router
 from app.routes.areas import admin_router as areas_admin_router, biller_router as areas_biller_router
 from app.routes.admin import router as admin_router
+from app.routes.orders import router as orders_router
+from app.routes.tables import router as tables_router
 
 app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG)
 
@@ -16,6 +18,8 @@ app.include_router(menu_router)
 app.include_router(areas_admin_router)
 app.include_router(areas_biller_router)
 app.include_router(admin_router)
+app.include_router(orders_router)
+app.include_router(tables_router)
 
 # CORS middleware
 app.add_middleware(

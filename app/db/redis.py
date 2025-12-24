@@ -1,3 +1,4 @@
+from typing import Optional
 import redis.asyncio as redis
 from app.core.config import settings
 
@@ -45,3 +46,64 @@ async def ping_redis() -> bool:
     except Exception:
         return False
 
+
+async def acquire_lock(key: str, ttl: int = 2) -> bool:
+    """
+    Acquire a distributed lock with TTL (time-to-live) in seconds.
+    Returns True if lock was acquired, False if already locked.
+    """
+    if redis_client is None:
+        # If Redis is not available, allow operation (graceful degradation)
+        return True
+    
+    try:
+        # Try to set the key with NX (only if not exists) and EX (expiration)
+        result = await redis_client.set(f"lock:{key}", "1", nx=True, ex=ttl)
+        return result is True
+    except Exception:
+        # On error, allow operation (graceful degradation)
+        return True
+
+
+async def release_lock(key: str):
+    """Release a distributed lock"""
+    if redis_client is None:
+        return
+    
+    try:
+        await redis_client.delete(f"lock:{key}")
+    except Exception:
+        pass
+
+
+async def get_cache(key: str) -> Optional[str]:
+    """Get a value from cache"""
+    if redis_client is None:
+        return None
+    
+    try:
+        return await redis_client.get(f"cache:{key}")
+    except Exception:
+        return None
+
+
+async def set_cache(key: str, value: str, ttl: int = 2):
+    """Set a value in cache with TTL in seconds"""
+    if redis_client is None:
+        return
+    
+    try:
+        await redis_client.set(f"cache:{key}", value, ex=ttl)
+    except Exception:
+        pass
+
+
+async def delete_cache(key: str):
+    """Delete a value from cache"""
+    if redis_client is None:
+        return
+    
+    try:
+        await redis_client.delete(f"cache:{key}")
+    except Exception:
+        pass

@@ -1,3 +1,4 @@
+import json
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.models.area import Area, AreaCreate, AreaUpdate
@@ -22,6 +23,7 @@ from app.services.assignment_service import (
 )
 from app.core.rbac import require_admin, require_biller, get_current_user
 from app.models.user import User
+from app.db.redis import get_cache, set_cache, delete_cache
 
 # Admin router for areas
 admin_router = APIRouter(prefix="/admin", tags=["admin"])
@@ -129,7 +131,7 @@ async def get_biller_areas(current_user: User = Depends(get_current_user)):
 
 @biller_router.get("/{area_id}/tables", response_model=List[Table], dependencies=[Depends(require_biller)])
 async def get_biller_tables(area_id: str, current_user: User = Depends(get_current_user)):
-    """Get tables for an area (only if biller is assigned to that area)"""
+    """Get tables for an area (only if biller is assigned to that area) with Redis caching"""
     # Check if biller is assigned to this area
     if not await is_biller_assigned_to_area(current_user.id, area_id):
         raise HTTPException(
@@ -137,4 +139,26 @@ async def get_biller_tables(area_id: str, current_user: User = Depends(get_curre
             detail="You are not assigned to this area"
         )
     
-    return await get_tables(area_id)
+    # Try to get from cache (canvas snapshot)
+    cache_key = f"area_tables:{area_id}"
+    cached_data = await get_cache(cache_key)
+    if cached_data:
+        try:
+            tables_data = json.loads(cached_data)
+            return [Table(**table) for table in tables_data]
+        except Exception:
+            # If cache is corrupted, continue to fetch from DB
+            pass
+    
+    # Fetch from database
+    tables = await get_tables(area_id)
+    
+    # Cache the result (canvas snapshot) with 2 second TTL
+    try:
+        tables_json = json.dumps([table.model_dump() for table in tables])
+        await set_cache(cache_key, tables_json, ttl=2)
+    except Exception:
+        # If caching fails, continue without caching
+        pass
+    
+    return tables
