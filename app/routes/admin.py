@@ -1,5 +1,6 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+import json
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from app.models.user import User, UserCreate
 from app.models.assignment import Assignment, AssignmentCreate
 from app.services.auth_service import create_biller
@@ -9,6 +10,12 @@ from app.services.assignment_service import (
 )
 from app.repositories.user_repo import get_all_users
 from app.core.rbac import require_admin, get_current_user
+from app.services.admin_reporting_service import (
+    get_admin_summary,
+    get_running_tables,
+    get_biller_performance,
+)
+from app.db.redis import get_cache, set_cache
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -48,4 +55,68 @@ async def assign_biller_to_areas(
 async def list_assignments():
     """Get all assignments (admin only)"""
     return await get_assignments()
+
+
+@router.get("/summary", dependencies=[Depends(require_admin)])
+async def admin_summary(date: str = Query("today")):
+    """Get admin summary for a given date (default: today)."""
+    # Redis cache key (TTL: 60s)
+    cache_key = f"admin:summary:{date}"
+    cached = await get_cache(cache_key)
+    if cached:
+        try:
+            return json.loads(cached)
+        except Exception:
+            pass
+
+    data = await get_admin_summary(date)
+
+    try:
+        await set_cache(cache_key, json.dumps(data), ttl=60)
+    except Exception:
+        pass
+
+    return data
+
+
+@router.get("/running-tables", dependencies=[Depends(require_admin)])
+async def admin_running_tables():
+    """Get list of currently running tables with area, biller, and totals."""
+    cache_key = "admin:running_tables"
+    cached = await get_cache(cache_key)
+    if cached:
+        try:
+            return json.loads(cached)
+        except Exception:
+            pass
+
+    data = await get_running_tables()
+
+    try:
+        await set_cache(cache_key, json.dumps(data), ttl=60)
+    except Exception:
+        pass
+
+    return data
+
+
+@router.get("/biller-performance", dependencies=[Depends(require_admin)])
+async def admin_biller_performance(date: str = Query("today")):
+    """Get biller performance (totals per biller) for a given date (default: today)."""
+    cache_key = f"admin:biller_performance:{date}"
+    cached = await get_cache(cache_key)
+    if cached:
+        try:
+            return json.loads(cached)
+        except Exception:
+            pass
+
+    data = await get_biller_performance(date)
+
+    try:
+        await set_cache(cache_key, json.dumps(data), ttl=60)
+    except Exception:
+        pass
+
+    return data
 
