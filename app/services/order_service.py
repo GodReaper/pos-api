@@ -489,7 +489,13 @@ async def list_orders_service(
         items_count = sum(i.qty for i in order.items)
         previews: List[OrderItemPreview] = []
         for item in order.items[:3]:
-            previews.append(OrderItemPreview(name=item.name_snapshot, qty=item.qty))
+            previews.append(
+                OrderItemPreview(
+                    name=item.name_snapshot,
+                    qty=item.qty,
+                    price=item.price_snapshot,
+                )
+            )
 
         table_name = await _get_table_name(order.table_id)
         area_name = await _get_area_name(order.area_id)

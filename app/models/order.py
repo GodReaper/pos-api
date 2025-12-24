@@ -141,6 +141,7 @@ class OrderItemPreview(BaseModel):
     """Lightweight item preview for order listings"""
     name: str
     qty: int
+    price: float
 
 
 class OrderListItem(BaseModel):
