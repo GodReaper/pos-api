@@ -17,6 +17,29 @@ from app.repositories.order_repo import get_order_by_id
 router = APIRouter(prefix="/orders", tags=["orders"])
 
 
+@router.get("/{order_id}", response_model=Order)
+async def get_order(
+    order_id: str,
+    current_user: User = Depends(require_biller)
+):
+    """Get a single order by ID"""
+    order = await get_order_by_id(order_id)
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Order not found"
+        )
+
+    # Check if biller is assigned to the area
+    if not await is_biller_assigned_to_area(current_user.id, order.area_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not assigned to this area"
+        )
+
+    return order
+
+
 @router.post("/{order_id}/items", response_model=Order)
 async def update_order_items(
     order_id: str,
