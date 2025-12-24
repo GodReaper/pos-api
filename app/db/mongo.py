@@ -52,6 +52,17 @@ async def create_indexes():
         # Create indexes for menu_items
         await db.menu_items.create_index("category_id")
         
+        # Create indexes for areas
+        await db.areas.create_index("sort_order")
+        
+        # Create indexes for tables
+        await db.tables.create_index("area_id")
+        await db.tables.create_index("status")
+        
+        # Create indexes for assignments
+        await db.assignments.create_index("biller_id", unique=True)
+        await db.assignments.create_index("admin_id")
+        
         print("Database indexes created successfully")
     except Exception as e:
         print(f"Warning: Failed to create indexes: {e}")
