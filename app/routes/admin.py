@@ -7,9 +7,16 @@ from app.services.assignment_service import (
     create_or_update_assignment_service,
     get_assignments
 )
+from app.repositories.user_repo import get_all_users
 from app.core.rbac import require_admin, get_current_user
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.get("/users", response_model=List[User], dependencies=[Depends(require_admin)])
+async def list_users():
+    """Get all users (admin only)"""
+    return await get_all_users()
 
 
 @router.post("/users", response_model=User, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])

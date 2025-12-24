@@ -12,9 +12,10 @@ class AssignmentBase(BaseModel):
     area_ids: List[str] = Field(..., min_items=1, description="List of area IDs assigned to biller")
 
 
-class AssignmentCreate(AssignmentBase):
-    """Assignment creation model"""
-    pass
+class AssignmentCreate(BaseModel):
+    """Assignment creation model (admin_id comes from authenticated user)"""
+    biller_id: str = Field(..., description="Biller user ID")
+    area_ids: List[str] = Field(..., min_items=1, description="List of area IDs assigned to biller")
 
 
 class AssignmentUpdate(BaseModel):

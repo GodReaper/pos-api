@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from app.db import mongo
 from app.models.user import UserInDB, User
@@ -58,4 +58,28 @@ async def admin_exists() -> bool:
     
     count = await mongo.db.users.count_documents({"role": "admin"})
     return count > 0
+
+
+async def get_all_users() -> List[User]:
+    """Get all users"""
+    if mongo.db is None:
+        return []
+    
+    cursor = mongo.db.users.find()
+    users = []
+    async for user_doc in cursor:
+        users.append(User.from_db(user_doc))
+    return users
+
+
+async def get_all_users() -> List[User]:
+    """Get all users"""
+    if mongo.db is None:
+        return []
+    
+    cursor = mongo.db.users.find()
+    users = []
+    async for user_doc in cursor:
+        users.append(User.from_db(user_doc))
+    return users
 
