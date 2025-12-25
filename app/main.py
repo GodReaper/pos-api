@@ -9,6 +9,7 @@ from app.routes.areas import admin_router as areas_admin_router, biller_router a
 from app.routes.admin import router as admin_router
 from app.routes.orders import router as orders_router
 from app.routes.tables import router as tables_router
+from app.routes.reports import router as reports_router
 
 app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG)
 
@@ -20,6 +21,7 @@ app.include_router(areas_biller_router)
 app.include_router(admin_router)
 app.include_router(orders_router)
 app.include_router(tables_router)
+app.include_router(reports_router)
 
 # CORS middleware
 app.add_middleware(

@@ -1,14 +1,14 @@
 from typing import List
 import json
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from app.models.user import User, UserCreate
+from app.models.user import User, UserCreate, UserUpdate
 from app.models.assignment import Assignment, AssignmentCreate
 from app.services.auth_service import create_biller
 from app.services.assignment_service import (
     create_or_update_assignment_service,
     get_assignments
 )
-from app.repositories.user_repo import get_all_users
+from app.repositories.user_repo import get_all_users, get_user_by_id, update_user, update_user_by_username, get_user_by_username
 from app.core.rbac import require_admin, get_current_user
 from app.services.admin_reporting_service import (
     get_admin_summary,
@@ -39,7 +39,61 @@ async def create_user(
             detail="This endpoint can only create biller users"
         )
     
-    return await create_biller(user_data.username, user_data.password)
+    return await create_biller(user_data.username, user_data.password, user_data.report_username)
+
+
+@router.put("/users/{user_id}", response_model=User, dependencies=[Depends(require_admin)])
+async def update_user_endpoint(
+    user_id: str,
+    user_data: UserUpdate,
+    current_user: User = Depends(get_current_user)
+):
+    """Update a user's report_username (admin only)"""
+    user = await get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # No validation needed - report_username can be any string, doesn't need to exist in DB
+    update_dict = user_data.model_dump(exclude_unset=True)
+    updated_user = await update_user(user_id, update_dict)
+    
+    if not updated_user:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update user"
+        )
+    
+    return updated_user
+
+
+@router.put("/users/{username}/report-username", response_model=User, dependencies=[Depends(require_admin)])
+async def update_user_report_username_by_username(
+    username: str,
+    user_data: UserUpdate,
+    current_user: User = Depends(get_current_user)
+):
+    """Update a user's report_username by username (admin only) - More convenient endpoint"""
+    user = await get_user_by_username(username)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with username '{username}' not found"
+        )
+    
+    # No validation needed - report_username can be any string, doesn't need to exist in DB
+    update_dict = user_data.model_dump(exclude_unset=True)
+    updated_user = await update_user_by_username(username, update_dict)
+    
+    if not updated_user:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update user"
+        )
+    
+    return updated_user
 
 
 @router.post("/assign", response_model=Assignment, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])

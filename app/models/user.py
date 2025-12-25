@@ -39,11 +39,13 @@ class UserBase(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     role: str = Field(..., pattern="^(admin|biller)$")
     is_active: bool = True
+    report_username: Optional[str] = Field(None, description="Username whose reports this user can view")
 
 
 class UserCreate(UserBase):
     """User creation model"""
     password: str = Field(..., min_length=6)
+    report_username: Optional[str] = Field(None, description="Username whose reports this user can view")
 
 
 class UserInDB(UserBase):
@@ -72,7 +74,8 @@ class User(UserBase):
             username=db_user["username"],
             role=db_user["role"],
             is_active=db_user["is_active"],
-            created_at=db_user["created_at"]
+            created_at=db_user["created_at"],
+            report_username=db_user.get("report_username")
         )
 
 
@@ -86,6 +89,11 @@ class TokenResponse(BaseModel):
     """Token response model"""
     access_token: str
     token_type: str = "bearer"
+
+
+class UserUpdate(BaseModel):
+    """User update model"""
+    report_username: Optional[str] = Field(None, description="Username whose reports this user can view")
 
 
 class SeedAdminRequest(BaseModel):

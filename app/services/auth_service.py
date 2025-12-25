@@ -91,7 +91,7 @@ async def seed_admin(username: str, password: str) -> User:
     return admin_user
 
 
-async def create_biller(username: str, password: str) -> User:
+async def create_biller(username: str, password: str, report_username: Optional[str] = None) -> User:
     """Create a new biller user"""
     # Check if username already exists
     if await user_exists(username):
@@ -100,13 +100,15 @@ async def create_biller(username: str, password: str) -> User:
             detail="Username already exists"
         )
     
+    # No validation needed - report_username can be any string, doesn't need to exist in DB
     # Create biller user
     password_hash = hash_password(password)
     user_data = UserInDB(
         username=username,
         password_hash=password_hash,
         role="biller",
-        is_active=True
+        is_active=True,
+        report_username=report_username
     )
     
     biller_user = await create_user(user_data)
