@@ -2,6 +2,11 @@ from typing import List, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel
+from app.core.timezone import (
+    parse_date_as_ist,
+    get_today_start_ist,
+    get_today_end_ist,
+)
 from app.models.order import Order, OrderItemUpdate, Payment, OrderListItem
 from app.models.user import User
 from app.services.order_service import (
@@ -41,26 +46,27 @@ async def list_orders(
     """
     List orders with filters and pagination.
     - scope: running|closed|cancelled|all (default running)
-    - from/to: YYYY-MM-DD (optional)
+    - from/to: YYYY-MM-DD (optional, defaults to today in IST if not specified)
     - biller_id: filter by creator (admin only)
+    
+    All dates are interpreted in IST (Indian Standard Time, UTC+5:30).
+    If from/to dates are not provided, defaults to today's date range in IST.
     """
     # Enforce biller_id filter only for admin
     effective_biller_id = biller_id
     if current_user.role != "admin":
         effective_biller_id = None
 
-    # Parse dates as UTC day bounds
-    def _parse_date(value: Optional[str]) -> Optional[datetime]:
-        if not value:
-            return None
-        try:
-            # Interpret as naive date and assume UTC
-            return datetime.fromisoformat(value)
-        except ValueError:
-            return None
-
-    from_dt = _parse_date(from_date)
-    to_dt = _parse_date(to_date)
+    # Parse dates as IST day bounds, default to today if not provided
+    from_dt = parse_date_as_ist(from_date) if from_date else get_today_start_ist()
+    to_dt = parse_date_as_ist(to_date) if to_date else get_today_end_ist()
+    
+    # If both dates provided, ensure from <= to
+    if from_dt and to_dt and from_dt > to_dt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="from_date must be less than or equal to to_date"
+        )
 
     items, total = await list_orders_service(
         scope=scope,

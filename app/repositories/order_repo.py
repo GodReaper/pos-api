@@ -1,8 +1,9 @@
 from typing import Optional, List, Tuple, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from app.db import mongo
 from app.models.order import OrderInDB, Order
 from bson import ObjectId
+from app.core.timezone import now_ist, ist_to_utc
 
 
 async def get_order_by_id(order_id: str) -> Optional[Order]:
@@ -83,7 +84,7 @@ async def create_order(order_data: OrderInDB) -> Order:
     if order_dict.get("cancelled_by_user_id"):
         order_dict["cancelled_by_user_id"] = ObjectId(order_dict["cancelled_by_user_id"])
     
-    # Convert nested models to dicts
+    # Convert nested models to dicts (model_dump() already does this, but ensure consistency)
     if order_dict.get("items"):
         order_dict["items"] = [
             item.model_dump() if hasattr(item, "model_dump") else item
@@ -110,6 +111,52 @@ async def create_order(order_data: OrderInDB) -> Order:
             payment.model_dump() if hasattr(payment, "model_dump") else payment
             for payment in order_dict["payments"]
         ]
+    
+    # Convert IST datetime fields to UTC for MongoDB storage
+    # (MongoDB stores datetimes in UTC, so we convert IST to UTC)
+    if order_dict.get("created_at") and isinstance(order_dict["created_at"], datetime):
+        if order_dict["created_at"].tzinfo is not None:
+            order_dict["created_at"] = ist_to_utc(order_dict["created_at"])
+        else:
+            # If naive, assume it's already UTC or IST - set to UTC for safety
+            order_dict["created_at"] = order_dict["created_at"].replace(tzinfo=timezone.utc)
+    
+    if order_dict.get("updated_at") and isinstance(order_dict["updated_at"], datetime):
+        if order_dict["updated_at"].tzinfo is not None:
+            order_dict["updated_at"] = ist_to_utc(order_dict["updated_at"])
+        else:
+            order_dict["updated_at"] = order_dict["updated_at"].replace(tzinfo=timezone.utc)
+    
+    if order_dict.get("cancelled_at") and isinstance(order_dict["cancelled_at"], datetime):
+        if order_dict["cancelled_at"].tzinfo is not None:
+            order_dict["cancelled_at"] = ist_to_utc(order_dict["cancelled_at"])
+        else:
+            order_dict["cancelled_at"] = order_dict["cancelled_at"].replace(tzinfo=timezone.utc)
+    
+    # Convert nested datetime fields to UTC
+    if order_dict.get("kot_prints"):
+        for kot in order_dict["kot_prints"]:
+            if kot.get("printed_at") and isinstance(kot["printed_at"], datetime):
+                if kot["printed_at"].tzinfo is not None:
+                    kot["printed_at"] = ist_to_utc(kot["printed_at"])
+                else:
+                    kot["printed_at"] = kot["printed_at"].replace(tzinfo=timezone.utc)
+    
+    if order_dict.get("bill_prints"):
+        for bill in order_dict["bill_prints"]:
+            if bill.get("printed_at") and isinstance(bill["printed_at"], datetime):
+                if bill["printed_at"].tzinfo is not None:
+                    bill["printed_at"] = ist_to_utc(bill["printed_at"])
+                else:
+                    bill["printed_at"] = bill["printed_at"].replace(tzinfo=timezone.utc)
+    
+    if order_dict.get("payments"):
+        for payment in order_dict["payments"]:
+            if payment.get("paid_at") and isinstance(payment["paid_at"], datetime):
+                if payment["paid_at"].tzinfo is not None:
+                    payment["paid_at"] = ist_to_utc(payment["paid_at"])
+                else:
+                    payment["paid_at"] = payment["paid_at"].replace(tzinfo=timezone.utc)
     
     result = await mongo.db.orders.insert_one(order_dict)
     
@@ -149,23 +196,55 @@ async def update_order(order_id: str, update_data: dict) -> Optional[Order]:
                 else update_dict["totals"]
             )
         if "kot_prints" in update_dict:
-            update_dict["kot_prints"] = [
+            kot_prints = [
                 kot.model_dump() if hasattr(kot, "model_dump") else kot
                 for kot in update_dict["kot_prints"]
             ]
+            # Convert IST datetime fields to UTC for MongoDB storage
+            for kot in kot_prints:
+                if kot.get("printed_at") and isinstance(kot["printed_at"], datetime):
+                    if kot["printed_at"].tzinfo is not None:
+                        kot["printed_at"] = ist_to_utc(kot["printed_at"])
+                    else:
+                        kot["printed_at"] = kot["printed_at"].replace(tzinfo=timezone.utc)
+            update_dict["kot_prints"] = kot_prints
         if "bill_prints" in update_dict:
-            update_dict["bill_prints"] = [
+            bill_prints = [
                 bill.model_dump() if hasattr(bill, "model_dump") else bill
                 for bill in update_dict["bill_prints"]
             ]
+            # Convert IST datetime fields to UTC for MongoDB storage
+            for bill in bill_prints:
+                if bill.get("printed_at") and isinstance(bill["printed_at"], datetime):
+                    if bill["printed_at"].tzinfo is not None:
+                        bill["printed_at"] = ist_to_utc(bill["printed_at"])
+                    else:
+                        bill["printed_at"] = bill["printed_at"].replace(tzinfo=timezone.utc)
+            update_dict["bill_prints"] = bill_prints
         if "payments" in update_dict:
-            update_dict["payments"] = [
+            payments = [
                 payment.model_dump() if hasattr(payment, "model_dump") else payment
                 for payment in update_dict["payments"]
             ]
+            # Convert IST datetime fields to UTC for MongoDB storage
+            for payment in payments:
+                if payment.get("paid_at") and isinstance(payment["paid_at"], datetime):
+                    if payment["paid_at"].tzinfo is not None:
+                        payment["paid_at"] = ist_to_utc(payment["paid_at"])
+                    else:
+                        payment["paid_at"] = payment["paid_at"].replace(tzinfo=timezone.utc)
+            update_dict["payments"] = payments
         
-        # Always update updated_at
-        update_dict["updated_at"] = datetime.utcnow()
+        # Convert IST datetime fields to UTC for MongoDB storage
+        if "cancelled_at" in update_dict and isinstance(update_dict["cancelled_at"], datetime):
+            if update_dict["cancelled_at"].tzinfo is not None:
+                update_dict["cancelled_at"] = ist_to_utc(update_dict["cancelled_at"])
+            else:
+                update_dict["cancelled_at"] = update_dict["cancelled_at"].replace(tzinfo=timezone.utc)
+        
+        # Always update updated_at (convert IST to UTC for MongoDB storage)
+        now_ist_dt = now_ist()
+        update_dict["updated_at"] = ist_to_utc(now_ist_dt)
         
         if not update_dict:
             return await get_order_by_id(order_id)

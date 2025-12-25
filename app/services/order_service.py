@@ -1,6 +1,13 @@
 from typing import Optional, List, Tuple
 from datetime import datetime, timezone
 from fastapi import HTTPException, status
+from app.core.timezone import (
+    now_ist,
+    ist_to_utc,
+    get_date_range_utc_for_ist_date,
+    get_today_start_ist,
+    get_today_end_ist,
+)
 from app.models.order import (
     Order,
     OrderCreate,
@@ -202,7 +209,7 @@ async def print_kot(order_id: str) -> Order:
         
         # Create KOT print record
         kot_print = KOTPrint(
-            printed_at=datetime.utcnow(),
+            printed_at=now_ist(),
             items_snapshot=[item.model_dump() for item in order.items]
         )
         
@@ -253,7 +260,7 @@ async def print_bill(order_id: str) -> Order:
         
         # Create bill print record
         bill_print = BillPrint(
-            printed_at=datetime.utcnow(),
+            printed_at=now_ist(),
             totals_snapshot=order.totals.model_dump()
         )
         
@@ -371,6 +378,9 @@ async def list_orders_service(
     """
     High-level listing with filters, enrichment (table/area names, biller username),
     pagination and lightweight items preview.
+    
+    Note: from_date and to_date should be in IST timezone. They will be converted
+    to UTC for database queries since MongoDB stores dates in UTC.
     """
     # Base query
     query: dict = {}
@@ -381,13 +391,17 @@ async def list_orders_service(
     elif isinstance(status_filter, str):
         query["status"] = status_filter
 
-    # Date range
+    # Date range - convert IST to UTC for database query
     if from_date or to_date:
         created_at_filter: dict = {}
         if from_date:
-            created_at_filter["$gte"] = from_date
+            # Convert IST datetime to UTC for MongoDB query
+            utc_from = ist_to_utc(from_date)
+            created_at_filter["$gte"] = utc_from
         if to_date:
-            created_at_filter["$lte"] = to_date
+            # Convert IST datetime to UTC for MongoDB query
+            utc_to = ist_to_utc(to_date)
+            created_at_filter["$lte"] = utc_to
         query["created_at"] = created_at_filter
 
     # Biller filter
@@ -563,11 +577,11 @@ async def cancel_order_service(order_id: str, user: User, reason: str) -> Order:
             detail="You do not have permission to cancel this order",
         )
 
-    now_utc = datetime.now(timezone.utc)
+    now = now_ist()
 
     update_data = {
         "status": "cancelled",
-        "cancelled_at": now_utc,
+        "cancelled_at": now,
         "cancelled_by_user_id": user.id,
         "cancelled_by_role": user.role,
         "cancel_reason": reason,

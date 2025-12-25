@@ -11,24 +11,36 @@ async def connect_redis():
     """Create Redis connection"""
     global redis_client
     try:
-        redis_client = redis.Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            username=settings.REDIS_USERNAME,
-            password=settings.REDIS_PASSWORD,
-            db=settings.REDIS_DB,
-            ssl=settings.REDIS_SSL,
-            decode_responses=True,
-            socket_connect_timeout=5
-        )
-        # Test connection immediately
+        if settings.REDIS_HOST and settings.REDIS_PORT:
+            # ✅ PROD / Redis.io: prefer host/port
+            redis_client = redis.Redis(
+                host=settings.REDIS_HOST,
+                port=settings.REDIS_PORT,
+                username=settings.REDIS_USERNAME,
+                password=settings.REDIS_PASSWORD,
+                db=settings.REDIS_DB,
+                ssl=settings.REDIS_SSL,
+                decode_responses=True,
+                socket_connect_timeout=5,
+            )
+        elif settings.REDIS_URL:
+            # ✅ Docker / dev: URL-style
+            redis_client = redis.from_url(
+                settings.REDIS_URL,
+                decode_responses=True,
+                socket_connect_timeout=5,
+            )
+        else:
+            print("Warning: No Redis configuration found")
+            redis_client = None
+            return
+
+        # Test connection
         await redis_client.ping()
         print("Redis connection established successfully")
     except Exception as e:
-        # Connection failed, but don't raise - let health checks handle it
         print(f"Warning: Redis connection failed: {e}")
         redis_client = None
-
 
 async def close_redis():
     """Close Redis connection"""

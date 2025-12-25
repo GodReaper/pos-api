@@ -1,0 +1,27 @@
+version: '3.9'
+
+services:
+  mongo:
+    image: mongo:latest
+    container_name: pos_mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"               # expose to host
+    environment:
+      MONGO_INITDB_DATABASE: pos_db
+    volumes:
+      - mongo_data:/data/db
+
+  redis:
+    image: redis:latest
+    container_name: pos_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"                 # expose to host
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+
+volumes:
+  mongo_data:
+  redis_data:
